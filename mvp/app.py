@@ -36,6 +36,11 @@ def init_db():
           UNIQUE(invoice_id,contact_id,stage),
           FOREIGN KEY(invoice_id) REFERENCES invoices(id),
           FOREIGN KEY(contact_id) REFERENCES contacts(id));
+        CREATE TABLE IF NOT EXISTS message_counters(
+          contact_id INTEGER NOT NULL, stage TEXT NOT NULL,
+          next_number INTEGER NOT NULL DEFAULT 1,
+          PRIMARY KEY(contact_id,stage),
+          FOREIGN KEY(contact_id) REFERENCES contacts(id));
         """)
 
 def digits(s): return re.sub(r"\D", "", s or "")
@@ -44,6 +49,19 @@ def valid_phone(p): return p.startswith("55") and len(p) in (12,13)
 def read_csv(file):
     raw = file.read().decode("utf-8-sig")
     return csv.DictReader(io.StringIO(raw), delimiter=";" if raw.count(";") > raw.count(",") else ",")
+
+def next_template_number(c, contact_id, stage):
+    row = c.execute(
+        "SELECT next_number FROM message_counters WHERE contact_id=? AND stage=?",
+        (contact_id, stage)
+    ).fetchone()
+    number = row["next_number"] if row else 1
+    following = number % 4 + 1
+    c.execute("""INSERT INTO message_counters(contact_id,stage,next_number)
+        VALUES(?,?,?) ON CONFLICT(contact_id,stage)
+        DO UPDATE SET next_number=excluded.next_number""",
+        (contact_id, stage, following))
+    return number
 
 def render_body(stage, number, inv):
     data = dict(nf=inv["nf"], municipio=f'{inv["municipality"]}/{inv["state"]}',
@@ -70,7 +88,7 @@ def prepare():
                 exists=c.execute("SELECT 1 FROM queue WHERE invoice_id=? AND contact_id=? AND stage=?",
                                  (inv["id"],contact["id"],stage)).fetchone()
                 if exists: continue
-                n=c.execute("SELECT COUNT(*) FROM queue WHERE stage=?",(stage,)).fetchone()[0] % 4 + 1
+                n=next_template_number(c, contact["id"], stage)
                 body=render_body(stage,n,inv)
                 c.execute("""INSERT INTO queue(invoice_id,contact_id,stage,template_number,body,created_at)
                     VALUES(?,?,?,?,?,?)""",(inv["id"],contact["id"],stage,n,body,datetime.now().isoformat(timespec="seconds")))
