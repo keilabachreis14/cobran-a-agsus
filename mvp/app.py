@@ -183,7 +183,7 @@ Preparação automática • WhatsApp Web • Envio manual</header><main>
 {% for r in rows %}<tr><td><b>{{r.nf}}</b><br>{{r.municipality}}/{{r.state}}</td><td>{{r.server_name}}<br>{{r.phone}}</td>
 <td>{{r.stage}}<br>Modelo {{r.template_number}}</td><td><details><summary>Visualizar</summary><pre>{{r.body}}</pre></details></td><td>
 <a class="btn" target="_blank" rel="noopener" href="https://wa.me/{{r.phone_digits}}?text={{r.encoded}}">Abrir WhatsApp</a>
-{% if not r.sent_confirmed_at %}<form method="post" action="/confirm/{{r.id}}"  onsubmit="return confirm('Você clicou em Enviar no WhatsApp?')"><button>Registrar envio</button></form>{% else %}<span class="pill">Envio registrado</span>{% endif %}</td></tr>{% endfor %}</table>
+{% if not r.sent_confirmed_at %}<form method="post" action="/confirm/{{r.id}}" onsubmit="return confirm('Você clicou em Enviar no WhatsApp?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button>Registrar envio</button></form>{% else %}<span class="pill">Envio registrado</span>{% endif %}</td></tr>{% endfor %}</table>
 {% else %}<p class="muted">Fila vazia. Importe dados e prepare mensagens.</p>{% endif %}</section>
 </main></body></html>
 """
