@@ -10,7 +10,7 @@ os.makedirs(DATA, exist_ok=True)
 DB_PATH = os.path.join(DATA, "robo_cobrancas.sqlite3")
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-this-local-secret")
-TRANSLOVATO_CNPJ = re.sub(r"\\D", "", os.environ.get("TRANSLOVATO_CNPJ", "07626776000160"))
+TRANSLOVATO_CNPJ = re.sub(r"\D", "", os.environ.get("TRANSLOVATO_CNPJ", "07626776000160"))
 TRANSLOVATO_TRACKING_URL = "https://www.translovato.com.br/minha-carga/"
 
 def connect():
