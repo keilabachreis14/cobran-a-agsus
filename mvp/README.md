@@ -3,7 +3,7 @@
 Aplicação local Flask para importar contatos e notas por CSV, preparar mensagens e abrir a conversa no WhatsApp com o texto preenchido. O envio permanece manual.
 
 ## Executar
-No Windows, execute `iniciar_windows.bat`. Em outros ambientes:
+No Windows, execute `iniciar_windows.bat`. Na primeira execução, ele cria `.env` a partir de `.env.example`; preencha `FLASK_SECRET_KEY`, `APP_USERNAME` e `APP_PASSWORD` no Bloco de Notas. Use uma senha exclusiva para o painel, diferente da senha Translovato. O `.env` é ignorado pelo Git e não deve ser compartilhado. Em outros ambientes:
 
 ```bash
 pip install -r requirements.txt
@@ -26,10 +26,10 @@ Colunas: `nf,municipio,uf,transportadora,status,previsao_entrega,data_entrega,bl
 - O segredo Flask é obrigatório (`FLASK_SECRET_KEY`); o servidor local escuta em `127.0.0.1` por padrão. Para acesso remoto, use proxy HTTPS autenticado, não exponha a porta diretamente.
 - Ainda não há trilha de auditoria completa nem interface para marcar NF assinada.
 - O banco SQLite é criado em `mvp/data/robo_cobrancas.sqlite3`, separado de qualquer banco existente no projeto.
-- A importação atualiza dados de notas existentes (mantendo bloqueio já ativo); validar a política de atualização antes de importar dados reais.
+- A importação de notas é conservadora: adiciona NFs novas e ignora NFs já existentes, sem sobrescrever status, datas, transportadora ou bloqueios. Atualizações diárias de rastreamento devem ser registradas no módulo próprio.
 - O segredo Flask deve ser definido por variável de ambiente `FLASK_SECRET_KEY` antes de qualquer uso além de teste local.
 
-**Não importar dados reais nem usar em produção até concluir os controles de segurança, testes e validação do fluxo.** Não versionar banco, CSVs, telefones, NFs ou credenciais.
+**Uso permitido nesta etapa: piloto local supervisionado, com cópia de segurança e dados autorizados. Ainda não é uma implantação de produção:** faltam trilha de auditoria completa, interface de NF assinada e validação operacional. Não versionar banco, CSVs, telefones, NFs ou credenciais.
 
 ## Rastreamento Translovato e contato AgSUS
 
