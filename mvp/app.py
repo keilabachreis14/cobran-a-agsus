@@ -3,9 +3,11 @@ from datetime import date, datetime
 from urllib.parse import quote
 from flask import Flask, Response, abort, flash, redirect, render_template_string, request, url_for
 from flask_wtf.csrf import CSRFProtect
+from dotenv import load_dotenv
 from modules.messages import TRANSPORT_MESSAGES, DELIVERED_MESSAGES
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE, ".env"))
 DATA = os.path.join(BASE, "data")
 os.makedirs(DATA, exist_ok=True)
 DB_PATH = os.path.join(DATA, "robo_cobrancas.sqlite3")
@@ -229,14 +231,12 @@ def import_invoices():
             if not (r.get("nf") and r.get("municipio") and r.get("uf")): continue
             status=(r.get("status") or "faturada").strip().lower()
             if status not in ("faturada","em_transporte","entregue"): status="faturada"
-            c.execute("""INSERT INTO invoices(nf,municipality,state,carrier,status,expected_delivery,delivered_date,blocked)
-              VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(nf) DO UPDATE SET municipality=excluded.municipality,
-              state=excluded.state,carrier=excluded.carrier,status=excluded.status,expected_delivery=excluded.expected_delivery,
-              delivered_date=excluded.delivered_date,blocked=MAX(invoices.blocked,excluded.blocked)""",
+            c.execute("""INSERT OR IGNORE INTO invoices(nf,municipality,state,carrier,status,expected_delivery,delivered_date,blocked)
+              VALUES(?,?,?,?,?,?,?,?)""",
               (r["nf"].strip(),r["municipio"].strip(),r["uf"].strip().upper(),r.get("transportadora","").strip(),
                status,r.get("previsao_entrega","").strip(),r.get("data_entrega","").strip(),int(r.get("bloqueada","0")=="1")))
-            count+=1
-    flash(f"{count} linhas de notas processadas; bloqueios existentes foram preservados.")
+            count+=c.execute("SELECT changes()").fetchone()[0]
+    flash(f"{count} notas novas importadas. NFs já existentes foram preservadas sem sobrescrita.")
     return redirect(url_for("home"))
 
 @app.post("/tracking/<int:invoice_id>")
