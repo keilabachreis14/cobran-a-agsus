@@ -22,7 +22,9 @@ Colunas: `nf,municipio,uf,transportadora,status,previsao_entrega,data_entrega,bl
 - O MVP não consulta automaticamente a Agência Brasileira nem qualquer transportadora.
 - O MVP não envia mensagens: apenas abre links wa.me para revisão e envio manual.
 - A rotação dos quatro modelos é global por etapa, não individual por cliente.
-- Não há autenticação de usuários, proteção CSRF, trilha de auditoria completa nem interface para marcar NF assinada.
+- O acesso ao painel exige autenticação HTTP Basic configurada por `APP_USERNAME` e `APP_PASSWORD`; formulários POST usam proteção CSRF. Em hospedagem, publique somente atrás de HTTPS.
+- O segredo Flask é obrigatório (`FLASK_SECRET_KEY`); o servidor local escuta em `127.0.0.1` por padrão. Para acesso remoto, use proxy HTTPS autenticado, não exponha a porta diretamente.
+- Ainda não há trilha de auditoria completa nem interface para marcar NF assinada.
 - O banco SQLite é criado em `mvp/data/robo_cobrancas.sqlite3`, separado de qualquer banco existente no projeto.
 - A importação atualiza dados de notas existentes (mantendo bloqueio já ativo); validar a política de atualização antes de importar dados reais.
 - O segredo Flask deve ser definido por variável de ambiente `FLASK_SECRET_KEY` antes de qualquer uso além de teste local.
@@ -31,7 +33,7 @@ Colunas: `nf,municipio,uf,transportadora,status,previsao_entrega,data_entrega,bl
 
 ## Rastreamento Translovato e contato AgSUS
 
-O painel inclui atalho para o portal oficial Minha Carga da Translovato. A consulta pública da transportadora pede CNPJ/CPF e número da NF. O portal do cliente oferece recursos adicionais mediante credenciais. O MVP **não automatiza scraping nem autenticação**: o operador consulta no portal e registra no painel o status, a última ocorrência e a previsão. O histórico fica salvo com indicação de origem manual.
+O painel inclui atalho para o portal oficial Minha Carga da Translovato. A consulta pública da transportadora pede CNPJ/CPF e número da NF. O portal do cliente oferece recursos adicionais mediante credenciais. O MVP **não automatiza scraping, login nem consulta autenticada**: não há API pública documentada confirmada para essa operação. O operador consulta no portal e registra no painel o status, a última ocorrência e a previsão. As credenciais do portal não devem ser colocadas no repositório; não há motivo para armazená-las no MVP atual. O histórico fica salvo com indicação de origem manual.
 
 O CNPJ remetente configurado por padrão é `07.626.776/0001-60`; pode ser substituído pela variável de ambiente `TRANSLOVATO_CNPJ`. Confirme se esse é o CNPJ que consta como remetente na NF antes de consultar. Não salve senha da transportadora no código.
 
