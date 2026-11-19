@@ -1,0 +1,29 @@
+name: Testes do Robo de Cobrancas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Verificar sintaxe
+        run: python -m py_compile app.py app_original_review.py
+
+      - name: Verificar Flask
+        run: python -c "import flask; print('Flask instalado corretamente')"
