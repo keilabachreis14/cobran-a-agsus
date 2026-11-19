@@ -96,9 +96,9 @@ def preparar_mensagens_elegiveis():
    modelo=c.execute('SELECT next_number FROM counters WHERE stage=?',(etapa,)).fetchone()['next_number']
    corpo=message_template(etapa,modelo,r)
    c.execute('''INSERT INTO messages(nf,contact_id,stage,template_no,body,status,created_at,approved_at)
-    VALUES(?,?,?,?,?,'Aprovada',?,?)''',(r['nf'],contato['id'],etapa,modelo,corpo,now(),now()))
+    VALUES(?,?,?,?,?,'Rascunho',?,NULL)''',(r['nf'],contato['id'],etapa,modelo,corpo,now(),now()))
    c.execute('UPDATE counters SET next_number=? WHERE stage=?',(1 if modelo==4 else modelo+1,etapa))
-   audit(c,'Texto preparado automaticamente',r['nf'],f'Etapa {etapa}; modelo {modelo}; não enviado')
+   audit(c,'Rascunho preparado automaticamente',r['nf'],f'Etapa {etapa}; modelo {modelo}; aguardando aprovação manual; não enviado')
    total+=1
  return total
 
@@ -118,8 +118,7 @@ def gerar_vcard():
 
 CSS='''body{font:14px system-ui,Arial;background:#f4f6fb;color:#203047;margin:0}header{background:#1e3356;color:white;padding:23px 4vw}h1{margin:0;font-size:22px}main{max-width:1400px;margin:20px auto;padding:0 17px}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.card,.panel{background:white;border:1px solid #e2e7ee;border-radius:12px;padding:16px;margin-bottom:14px}.card b{font-size:26px}.card small{display:block;color:#64748b}.panel h2{margin-top:0;font-size:18px}.warn{background:#fff7e7;padding:12px;border-radius:8px}.ok{color:#08744c}.muted{color:#64748b;font-size:12px}table{width:100%;border-collapse:collapse}th,td{text-align:left;border-bottom:1px solid #e5eaf0;padding:8px;vertical-align:top}th{font-size:12px;color:#52647b}.scroller{overflow:auto;max-height:640px}input,select,textarea{font:inherit;padding:6px;border:1px solid #cdd5e1;border-radius:5px;max-width:180px}textarea{min-width:280px;min-height:85px}button,.link{background:#2656a7;color:white;border:0;border-radius:5px;padding:8px 10px;cursor:pointer;text-decoration:none;display:inline-block;font-size:12px}button:disabled{background:#a7aeb8}.inline{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;margin:3px 0}details{margin:5px 0}summary{cursor:pointer;color:#1b559c}.pill{border-radius:12px;background:#e9eef5;padding:3px 7px;font-size:11px;display:inline-block}.block{background:#ffebdc;color:#934418}.info{padding:10px;background:#e9f2fc;border-radius:6px}.flex{display:flex;gap:10px;flex-wrap:wrap}.flex>*{flex:1}.message{white-space:pre-wrap;max-width:700px;font:13px system-ui}.actions{min-width:180px}a{color:#2156a0}.footer{font-size:12px;color:#61728a;margin:25px 0}@media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}}'''
 def dashboard(msg=''):
- importar_ctes()
- preparar_mensagens_elegiveis()
+ # A abertura do painel não deve importar dados nem criar/aprovar mensagens.
  with conn() as c:
   inv=c.execute('''SELECT i.*, (SELECT COUNT(*) FROM contact_invoices ci WHERE ci.nf=i.nf) contacts_count FROM invoices i ORDER BY CAST(i.nf AS INTEGER)''').fetchall()
   contacts=c.execute('SELECT * FROM contacts ORDER BY municipality,server_name').fetchall()
@@ -248,8 +247,8 @@ class Handler(BaseHTTPRequestHandler):
      if r is None or r['blocked'] or r['invoice_signed']:raise ValueError('NF não encontrada, bloqueada ou já concluída')
      if stage=='transito' and r['tracking_status'] not in ('Em trânsito','Saiu para entrega'):raise ValueError('A carga ainda não está confirmada em transporte')
      if stage=='entregue' and r['tracking_status']!='Entregue':raise ValueError('Entrega não confirmada')
-     recipient=c.execute('''SELECT ct.* FROM contacts ct JOIN contact_invoices ci ON ci.contact_id=ct.id WHERE ci.nf=? ORDER BY ct.phone_validated DESC,ct.consent DESC,ct.id LIMIT 1''',(nf,)).fetchone()
-     if not recipient:raise ValueError('Nenhum contato relacionado a esta NF')
+     recipient=c.execute('''SELECT ct.* FROM contacts ct JOIN contact_invoices ci ON ci.contact_id=ct.id WHERE ci.nf=? AND ct.phone_validated=1 AND ct.consent=1 ORDER BY ct.id LIMIT 1''',(nf,)).fetchone()
+     if not recipient:raise ValueError('Nenhum contato relacionado, com telefone confirmado e autorização registrada')
      existing=c.execute("SELECT id FROM messages WHERE nf=? AND stage=? AND status IN ('Rascunho','Aprovada','Enviada')",(nf,stage)).fetchone()
      if existing:raise ValueError('Já existe mensagem dessa etapa para esta NF. Não foi criada duplicata.')
      model=c.execute('SELECT next_number FROM counters WHERE stage=?',(stage,)).fetchone()['next_number']
