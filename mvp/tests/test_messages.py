@@ -75,5 +75,46 @@ class MessageRotationTests(unittest.TestCase):
         self.assertEqual(robo.prepare(), 0)
 
 
+    def test_tracking_result_is_saved_and_delivery_updates_invoice(self):
+        with robo.connect() as c:
+            c.execute("""INSERT INTO invoices
+                (nf,municipality,state,status)
+                VALUES('NF-T','Cidade','PR','em_transporte')""")
+            invoice_id = c.execute("SELECT id FROM invoices WHERE nf='NF-T'").fetchone()["id"]
+        response = robo.app.test_client().post(
+            f"/tracking/{invoice_id}",
+            data={"status":"entregue","last_event":"Entregue ao destinatário",
+                  "eta":"","delivered_date":"2026-11-19"},
+            follow_redirects=True
+        )
+        self.assertEqual(response.status_code, 200)
+        with robo.connect() as c:
+            inv = c.execute("SELECT status,delivered_date FROM invoices WHERE id=?",(invoice_id,)).fetchone()
+            history = c.execute("SELECT status,last_event,source FROM tracking_history WHERE invoice_id=?",(invoice_id,)).fetchone()
+        self.assertEqual(inv["status"], "entregue")
+        self.assertEqual(inv["delivered_date"], "2026-11-19")
+        self.assertEqual(history["status"], "entregue")
+        self.assertEqual(history["source"], "manual-portal-translovato")
+
+    def test_tracking_cannot_mark_delivered_without_delivery_date(self):
+        with robo.connect() as c:
+            c.execute("""INSERT INTO invoices
+                (nf,municipality,state,status)
+                VALUES('NF-T2','Cidade','PR','em_transporte')""")
+            invoice_id = c.execute("SELECT id FROM invoices WHERE nf='NF-T2'").fetchone()["id"]
+        response = robo.app.test_client().post(
+            f"/tracking/{invoice_id}",
+            data={"status":"entregue","last_event":"Consta entregue no portal",
+                  "eta":"","delivered_date":""},
+            follow_redirects=True
+        )
+        self.assertEqual(response.status_code, 200)
+        with robo.connect() as c:
+            inv = c.execute("SELECT status FROM invoices WHERE id=?",(invoice_id,)).fetchone()
+            history_count = c.execute("SELECT COUNT(*) FROM tracking_history WHERE invoice_id=?",(invoice_id,)).fetchone()[0]
+        self.assertEqual(inv["status"], "em_transporte")
+        self.assertEqual(history_count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
