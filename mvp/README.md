@@ -28,3 +28,11 @@ Colunas: `nf,municipio,uf,transportadora,status,previsao_entrega,data_entrega,bl
 - O segredo Flask deve ser definido por variável de ambiente `FLASK_SECRET_KEY` antes de qualquer uso além de teste local.
 
 **Não importar dados reais nem usar em produção até concluir os controles de segurança, testes e validação do fluxo.** Não versionar banco, CSVs, telefones, NFs ou credenciais.
+
+## Rastreamento Translovato e contato AgSUS
+
+O painel inclui atalho para o portal oficial Minha Carga da Translovato. A consulta pública da transportadora pede CNPJ/CPF e número da NF. O portal do cliente oferece recursos adicionais mediante credenciais. O MVP **não automatiza scraping nem autenticação**: o operador consulta no portal e registra no painel o status, a última ocorrência e a previsão. O histórico fica salvo com indicação de origem manual.
+
+O CNPJ remetente configurado por padrão é `07.626.776/0001-60`; pode ser substituído pela variável de ambiente `TRANSLOVATO_CNPJ`. Confirme se esse é o CNPJ que consta como remetente na NF antes de consultar. Não salve senha da transportadora no código.
+
+Para dúvidas logísticas do COMBO UBS, o painel exibe os contatos publicados pelo Ministério da Saúde para a AgSUS: `logistica.comboubs@agenciasus.org.br`, `contatocombos@agenciasus.org.br` e telefones institucionais. A AgSUS é responsável pelo acompanhamento logístico do programa; a Translovato é a transportadora.
