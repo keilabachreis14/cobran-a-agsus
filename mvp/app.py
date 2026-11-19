@@ -10,6 +10,8 @@ os.makedirs(DATA, exist_ok=True)
 DB_PATH = os.path.join(DATA, "robo_cobrancas.sqlite3")
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-this-local-secret")
+TRANSLOVATO_CNPJ = re.sub(r"\D", "", os.environ.get("TRANSLOVATO_CNPJ", "07626776000160"))
+TRANSLOVATO_TRACKING_URL = "https://www.translovato.com.br/minha-carga/"
 
 def connect():
     c = sqlite3.connect(DB_PATH)
@@ -41,6 +43,12 @@ def init_db():
           next_number INTEGER NOT NULL DEFAULT 1,
           PRIMARY KEY(contact_id,stage),
           FOREIGN KEY(contact_id) REFERENCES contacts(id));
+        CREATE TABLE IF NOT EXISTS tracking_history(
+          id INTEGER PRIMARY KEY, invoice_id INTEGER NOT NULL,
+          checked_at TEXT NOT NULL, status TEXT NOT NULL,
+          last_event TEXT DEFAULT '', eta TEXT DEFAULT '',
+          source TEXT NOT NULL DEFAULT 'manual',
+          FOREIGN KEY(invoice_id) REFERENCES invoices(id));
         """)
 
 def digits(s): return re.sub(r"\D", "", s or "")
@@ -118,6 +126,29 @@ Preparação automática • WhatsApp Web • Envio manual</header><main>
 <form action="/import/contacts" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".csv" required><button>Importar contatos</button></form></section>
 <section><h2>Importar notas CSV</h2><p class="muted">Colunas: nf,municipio,uf,transportadora,status,previsao_entrega,data_entrega,bloqueada. Datas AAAA-MM-DD.</p>
 <form action="/import/invoices" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".csv" required><button>Importar notas</button></form></section></div>
+<section><h2>Rastreamento — Translovato</h2>
+<p>A Translovato disponibiliza consulta pública por <b>CNPJ/CPF e número da Nota Fiscal</b>. A página pública consultada não documenta uma API de consulta automática; por isso, o MVP abre o portal oficial e permite registrar manualmente o resultado.</p>
+<p><b>CNPJ do remetente configurado:</b> {{translovato_cnpj}}</p>
+<a class="btn" href="{{tracking_url}}" target="_blank" rel="noopener">Abrir portal oficial Minha Carga</a>
+<p class="muted">No portal, informe o CNPJ/CPF e a NF. Depois, registre abaixo o status, a última ocorrência e a previsão retornados. Não informe senha do portal no robô.</p>
+</section>
+<section><h2>Notas fiscais e acompanhamento</h2>
+{% if invoices %}<table><tr><th>NF / Município</th><th>Transportadora / Status</th><th>Última consulta</th><th>Registrar resultado</th></tr>
+{% for i in invoices %}<tr><td><b>{{i.nf}}</b><br>{{i.municipality}}/{{i.state}}</td>
+<td>{{i.carrier or 'Não informada'}}<br>{{i.status}}</td>
+<td>{% if i.checked_at %}{{i.checked_at}}<br><b>{{i.tracking_status}}</b><br>{{i.last_event}}<br>Previsão: {{i.tracking_eta or 'Não informada'}}{% else %}<span class="muted">Ainda não consultada</span>{% endif %}</td>
+<td><form method="post" action="/tracking/{{i.id}}">
+<label>Status</label><select name="status" required><option value="faturada">Faturada</option><option value="em_transporte">Em transporte</option><option value="entregue">Entregue</option><option value="ocorrencia">Ocorrência / pendência</option></select>
+<label>Última ocorrência / localização</label><input name="last_event" maxlength="500" placeholder="Ex.: carga em transferência na unidade..." required>
+<label>Previsão de entrega</label><input type="date" name="eta">
+<label>Data efetiva da entrega (se entregue)</label><input type="date" name="delivered_date">
+<button>Salvar consulta</button></form></td></tr>{% endfor %}</table>
+{% else %}<p class="muted">Nenhuma NF importada.</p>{% endif %}
+</section>
+<section><h2>Contato logístico AgSUS</h2>
+<p>Para divergências de entrega/recebimento do COMBO UBS, canais oficiais divulgados pelo Ministério da Saúde:</p>
+<ul><li>logistica.comboubs@agenciasus.org.br</li><li>contatocombos@agenciasus.org.br</li><li>(61) 99660-2116 · (61) 99657-7811 · (61) 99675-4516 · (61) 99658-9289</li></ul>
+</section>
 <section><h2>Preparar mensagens elegíveis</h2><p class="muted">Faturadas/em transporte exigem previsão. Entregues exigem data efetiva. NFs bloqueadas e contatos sem validação/autorização são ignorados.</p>
 <form action="/prepare" method="post"><button>Preparar fila automaticamente</button></form></section>
 <section><h2>Fila de mensagens</h2>{% if rows %}<table><tr><th>NF / município</th><th>Contato</th><th>Etapa</th><th>Texto</th><th>Ação</th></tr>
@@ -139,10 +170,14 @@ def home():
         rows=c.execute("""SELECT q.*,i.nf,i.municipality,i.state,ct.server_name,ct.phone
           FROM queue q JOIN invoices i ON i.id=q.invoice_id JOIN contacts ct ON ct.id=q.contact_id
           ORDER BY q.id DESC LIMIT 150""").fetchall()
+        invoices=c.execute("""SELECT i.*, th.checked_at, th.status AS tracking_status,
+          th.last_event, th.eta AS tracking_eta FROM invoices i
+          LEFT JOIN tracking_history th ON th.id=(SELECT MAX(id) FROM tracking_history WHERE invoice_id=i.id)
+          ORDER BY i.id DESC LIMIT 200""").fetchall()
         data=[]
         for x in rows:
             d=dict(x);d["phone_digits"]=digits(d["phone"]);d["encoded"]=quote(d["body"]);data.append(d)
-    return render_template_string(HTML,stats=stats,rows=data)
+    return render_template_string(HTML,stats=stats,rows=data,invoices=invoices,tracking_url=TRANSLOVATO_TRACKING_URL,translovato_cnpj=TRANSLOVATO_CNPJ)
 
 @app.post("/import/contacts")
 def import_contacts():
@@ -175,6 +210,45 @@ def import_invoices():
             count+=1
     flash(f"{count} linhas de notas processadas; bloqueios existentes foram preservados.")
     return redirect(url_for("home"))
+
+@app.post("/tracking/<int:invoice_id>")
+def save_tracking(invoice_id):
+    status=(request.form.get("status") or "").strip().lower()
+    allowed={"faturada","em_transporte","entregue","ocorrencia"}
+    if status not in allowed:
+        flash("Status de rastreamento inválido.")
+        return redirect(url_for("home"))
+    last_event=(request.form.get("last_event") or "").strip()
+    eta=(request.form.get("eta") or "").strip()
+    delivered=(request.form.get("delivered_date") or "").strip()
+    if not last_event:
+        flash("Informe a última ocorrência exibida no portal da Translovato.")
+        return redirect(url_for("home"))
+    if status=="entregue" and not delivered:
+        flash("Para marcar como entregue, informe a data efetiva da entrega.")
+        return redirect(url_for("home"))
+    for value in (eta,delivered):
+        if value:
+            try: date.fromisoformat(value)
+            except ValueError:
+                flash("Data inválida.")
+                return redirect(url_for("home"))
+    with connect() as c:
+        if not c.execute("SELECT id FROM invoices WHERE id=?",(invoice_id,)).fetchone():
+            flash("Nota fiscal não encontrada.")
+            return redirect(url_for("home"))
+        c.execute("""INSERT INTO tracking_history(invoice_id,checked_at,status,last_event,eta,source)
+          VALUES(?,?,?,?,?,'manual-portal-translovato')""",
+          (invoice_id,datetime.now().isoformat(timespec="seconds"),status,last_event,eta))
+        if status in ("faturada","em_transporte"):
+            c.execute("UPDATE invoices SET status=?,expected_delivery=? WHERE id=?",(status,eta,invoice_id))
+        elif status=="entregue":
+            c.execute("UPDATE invoices SET status='entregue',delivered_date=?,expected_delivery=? WHERE id=?",(delivered,eta,invoice_id))
+        else:
+            c.execute("UPDATE invoices SET status='em_transporte' WHERE id=?",(invoice_id,))
+    flash("Consulta registrada manualmente a partir do portal da Translovato.")
+    return redirect(url_for("home"))
+
 
 @app.post("/prepare")
 def prepare_route():
