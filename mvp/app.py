@@ -1,7 +1,8 @@
-import csv, io, os, re, sqlite3
+import csv, hmac, io, os, re, sqlite3
 from datetime import date, datetime
 from urllib.parse import quote
-from flask import Flask, flash, redirect, render_template_string, request, url_for
+from flask import Flask, Response, abort, flash, redirect, render_template_string, request, url_for
+from flask_wtf.csrf import CSRFProtect
 from modules.messages import TRANSPORT_MESSAGES, DELIVERED_MESSAGES
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -9,9 +10,32 @@ DATA = os.path.join(BASE, "data")
 os.makedirs(DATA, exist_ok=True)
 DB_PATH = os.path.join(DATA, "robo_cobrancas.sqlite3")
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-this-local-secret")
+app.secret_key = os.environ.get("FLASK_SECRET_KEY")
+csrf = CSRFProtect(app)
 TRANSLOVATO_CNPJ = re.sub(r"\D", "", os.environ.get("TRANSLOVATO_CNPJ", "07626776000160"))
 TRANSLOVATO_TRACKING_URL = "https://www.translovato.com.br/minha-carga/"
+
+
+@app.before_request
+def require_operator_auth():
+    if app.config.get('TESTING') or request.endpoint == 'static':
+        return None
+    username = os.environ.get('APP_USERNAME', '')
+    password = os.environ.get('APP_PASSWORD', '')
+    if not username or not password:
+        abort(503, description='Configure APP_USERNAME e APP_PASSWORD no ambiente seguro.')
+    supplied = request.authorization
+    valid = bool(supplied and hmac.compare_digest(supplied.username or '', username) and hmac.compare_digest(supplied.password or '', password))
+    if not valid:
+        return Response('Autenticação necessária.', 401, {'WWW-Authenticate': 'Basic realm="Robo COMBO UBS"'})
+
+@app.after_request
+def security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 def connect():
     c = sqlite3.connect(DB_PATH)
@@ -123,9 +147,11 @@ Preparação automática • WhatsApp Web • Envio manual</header><main>
 <div class="notice"><b>Importante:</b> só entram na fila contatos com telefone validado e autorização registrada. Nenhuma mensagem é enviada pelo sistema.</div>
 <div class="forms">
 <section><h2>Importar contatos CSV</h2><p class="muted">Colunas: municipio,uf,servidor,telefone,telefone_validado,autorizado. Use 1 para validar/autorizar.</p>
-<form action="/import/contacts" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".csv" required><button>Importar contatos</button></form></section>
+<form action="/import/contacts" method="post" enctype="multipart/form-data">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="file" name="file" accept=".csv" required><button>Importar contatos</button></form></section>
 <section><h2>Importar notas CSV</h2><p class="muted">Colunas: nf,municipio,uf,transportadora,status,previsao_entrega,data_entrega,bloqueada. Datas AAAA-MM-DD.</p>
-<form action="/import/invoices" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".csv" required><button>Importar notas</button></form></section></div>
+<form action="/import/invoices" method="post" enctype="multipart/form-data">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="file" name="file" accept=".csv" required><button>Importar notas</button></form></section></div>
 <section><h2>Rastreamento — Translovato</h2>
 <p>A Translovato disponibiliza consulta pública por <b>CNPJ/CPF e número da Nota Fiscal</b>. A página pública consultada não documenta uma API de consulta automática; por isso, o MVP abre o portal oficial e permite registrar manualmente o resultado.</p>
 <p><b>CNPJ do remetente configurado:</b> {{translovato_cnpj}}</p>
@@ -138,6 +164,7 @@ Preparação automática • WhatsApp Web • Envio manual</header><main>
 <td>{{i.carrier or 'Não informada'}}<br>{{i.status}}</td>
 <td>{% if i.checked_at %}{{i.checked_at}}<br><b>{{i.tracking_status}}</b><br>{{i.last_event}}<br>Previsão: {{i.tracking_eta or 'Não informada'}}{% else %}<span class="muted">Ainda não consultada</span>{% endif %}</td>
 <td><form method="post" action="/tracking/{{i.id}}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <label>Status</label><select name="status" required><option value="faturada">Faturada</option><option value="em_transporte">Em transporte</option><option value="entregue">Entregue</option><option value="ocorrencia">Ocorrência / pendência</option></select>
 <label>Última ocorrência / localização</label><input name="last_event" maxlength="500" placeholder="Ex.: carga em transferência na unidade..." required>
 <label>Previsão de entrega</label><input type="date" name="eta">
@@ -150,12 +177,13 @@ Preparação automática • WhatsApp Web • Envio manual</header><main>
 <ul><li>logistica.comboubs@agenciasus.org.br</li><li>contatocombos@agenciasus.org.br</li><li>(61) 99660-2116 · (61) 99657-7811 · (61) 99675-4516 · (61) 99658-9289</li></ul>
 </section>
 <section><h2>Preparar mensagens elegíveis</h2><p class="muted">Faturadas/em transporte exigem previsão. Entregues exigem data efetiva. NFs bloqueadas e contatos sem validação/autorização são ignorados.</p>
-<form action="/prepare" method="post"><button>Preparar fila automaticamente</button></form></section>
+<form action="/prepare" method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button>Preparar fila automaticamente</button></form></section>
 <section><h2>Fila de mensagens</h2>{% if rows %}<table><tr><th>NF / município</th><th>Contato</th><th>Etapa</th><th>Texto</th><th>Ação</th></tr>
 {% for r in rows %}<tr><td><b>{{r.nf}}</b><br>{{r.municipality}}/{{r.state}}</td><td>{{r.server_name}}<br>{{r.phone}}</td>
 <td>{{r.stage}}<br>Modelo {{r.template_number}}</td><td><details><summary>Visualizar</summary><pre>{{r.body}}</pre></details></td><td>
 <a class="btn" target="_blank" rel="noopener" href="https://wa.me/{{r.phone_digits}}?text={{r.encoded}}">Abrir WhatsApp</a>
-{% if not r.sent_confirmed_at %}<form method="post" action="/confirm/{{r.id}}" onsubmit="return confirm('Você clicou em Enviar no WhatsApp?')"><button>Registrar envio</button></form>{% else %}<span class="pill">Envio registrado</span>{% endif %}</td></tr>{% endfor %}</table>
+{% if not r.sent_confirmed_at %}<form method="post" action="/confirm/{{r.id}}" onsubmit="return confirm('Você clicou em Enviar no WhatsApp?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button>Registrar envio</button></form>{% else %}<span class="pill">Envio registrado</span>{% endif %}</td></tr>{% endfor %}</table>
 {% else %}<p class="muted">Fila vazia. Importe dados e prepare mensagens.</p>{% endif %}</section>
 </main></body></html>
 """
@@ -265,4 +293,8 @@ def confirm(qid):
 
 if __name__=="__main__":
     init_db()
-    app.run(host="0.0.0.0",port=8765,debug=False)
+    required = ("FLASK_SECRET_KEY", "APP_USERNAME", "APP_PASSWORD")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError("Configure os segredos obrigatórios no ambiente: " + ", ".join(missing))
+    app.run(host="127.0.0.1",port=8765,debug=False)

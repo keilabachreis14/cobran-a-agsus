@@ -10,6 +10,7 @@ class MessageRotationTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.old_db = robo.DB_PATH
         robo.DB_PATH = os.path.join(self.tmp.name, "test.sqlite3")
+        robo.app.config.update(TESTING=True, SECRET_KEY="test-secret", WTF_CSRF_ENABLED=False)
         robo.init_db()
 
     def tearDown(self):
