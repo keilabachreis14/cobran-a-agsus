@@ -38,7 +38,7 @@ def init_db():
           FOREIGN KEY(contact_id) REFERENCES contacts(id));
         """)
 
-def digits(s): return re.sub(r"\\D", "", s or "")
+def digits(s): return re.sub(r"\D", "", s or "")
 def valid_phone(p): return p.startswith("55") and len(p) in (12,13)
 
 def read_csv(file):
