@@ -69,6 +69,9 @@ def init_db():
           next_number INTEGER NOT NULL DEFAULT 1,
           PRIMARY KEY(contact_id,stage),
           FOREIGN KEY(contact_id) REFERENCES contacts(id));
+        CREATE TABLE IF NOT EXISTS stage_message_counters(
+          stage TEXT PRIMARY KEY,
+          next_number INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS tracking_history(
           id INTEGER PRIMARY KEY, invoice_id INTEGER NOT NULL,
           checked_at TEXT NOT NULL, status TEXT NOT NULL,
@@ -84,17 +87,17 @@ def read_csv(file):
     raw = file.read().decode("utf-8-sig")
     return csv.DictReader(io.StringIO(raw), delimiter=";" if raw.count(";") > raw.count(",") else ",")
 
-def next_template_number(c, contact_id, stage):
+def next_template_number(c, stage):
     row = c.execute(
-        "SELECT next_number FROM message_counters WHERE contact_id=? AND stage=?",
-        (contact_id, stage)
+        "SELECT next_number FROM stage_message_counters WHERE stage=?",
+        (stage,)
     ).fetchone()
     number = row["next_number"] if row else 1
     following = number % 4 + 1
-    c.execute("""INSERT INTO message_counters(contact_id,stage,next_number)
-        VALUES(?,?,?) ON CONFLICT(contact_id,stage)
+    c.execute("""INSERT INTO stage_message_counters(stage,next_number)
+        VALUES(?,?) ON CONFLICT(stage)
         DO UPDATE SET next_number=excluded.next_number""",
-        (contact_id, stage, following))
+        (stage, following))
     return number
 
 def render_body(stage, number, inv):
@@ -105,28 +108,62 @@ def render_body(stage, number, inv):
     return (TRANSPORT_MESSAGES if stage == "transporte" else DELIVERED_MESSAGES)[number-1].format(**data)
 
 def prepare():
-    total=0
+    total = 0
     with connect() as c:
-        invoices=c.execute("SELECT * FROM invoices WHERE blocked=0 AND signed_invoice_received=0").fetchall()
+        # Rebuild only the unsent queue so previously prepared Model 1 rows
+        # are corrected. Confirmed sends remain untouched.
+        c.execute("DELETE FROM queue WHERE COALESCE(sent_confirmed_at, '') = ''")
+
+        # Resume each stage after the last confirmed message, independently.
+        for stage in ("transporte", "entregue"):
+            last = c.execute("""
+                SELECT template_number FROM queue
+                WHERE stage=? AND COALESCE(sent_confirmed_at, '') <> ''
+                ORDER BY id DESC LIMIT 1
+            """, (stage,)).fetchone()
+            next_number = (last["template_number"] % 4 + 1) if last else 1
+            c.execute("""
+                INSERT INTO stage_message_counters(stage,next_number)
+                VALUES(?,?) ON CONFLICT(stage)
+                DO UPDATE SET next_number=excluded.next_number
+            """, (stage, next_number))
+
+        invoices = c.execute("""
+            SELECT * FROM invoices
+            WHERE blocked=0 AND signed_invoice_received=0
+            ORDER BY id
+        """).fetchall()
+
         for inv in invoices:
-            if inv["status"]=="entregue" and inv["delivered_date"]:
-                stage="entregue"
-                try: date.fromisoformat(inv["delivered_date"])
-                except ValueError: continue
-            elif inv["status"] in ("faturada","em_transporte") and inv["expected_delivery"]:
-                stage="transporte"
-            else: continue
-            contacts=c.execute("""SELECT * FROM contacts WHERE municipality=? AND state=?
-                AND phone_validated=1 AND authorized=1""",(inv["municipality"],inv["state"])).fetchall()
+            if inv["status"] == "entregue" and inv["delivered_date"]:
+                stage = "entregue"
+                try:
+                    date.fromisoformat(inv["delivered_date"])
+                except ValueError:
+                    continue
+            elif inv["status"] in ("faturada", "em_transporte") and inv["expected_delivery"]:
+                stage = "transporte"
+            else:
+                continue
+
+            contacts = c.execute("""
+                SELECT * FROM contacts
+                WHERE municipality=? AND state=?
+                  AND phone_validated=1 AND authorized=1
+                ORDER BY id
+            """, (inv["municipality"], inv["state"])).fetchall()
+
             for contact in contacts:
-                exists=c.execute("SELECT 1 FROM queue WHERE invoice_id=? AND contact_id=? AND stage=?",
-                                 (inv["id"],contact["id"],stage)).fetchone()
-                if exists: continue
-                n=next_template_number(c, contact["id"], stage)
-                body=render_body(stage,n,inv)
-                c.execute("""INSERT INTO queue(invoice_id,contact_id,stage,template_number,body,created_at)
-                    VALUES(?,?,?,?,?,?)""",(inv["id"],contact["id"],stage,n,body,datetime.now().isoformat(timespec="seconds")))
-                total+=1
+                number = next_template_number(c, stage)
+                body = render_body(stage, number, inv)
+                c.execute("""
+                    INSERT INTO queue(invoice_id,contact_id,stage,template_number,body,created_at)
+                    VALUES(?,?,?,?,?,?)
+                """, (
+                    inv["id"], contact["id"], stage, number, body,
+                    datetime.now().isoformat(timespec="seconds")
+                ))
+                total += 1
     return total
 
 HTML = r"""
