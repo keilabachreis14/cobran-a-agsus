@@ -30,17 +30,31 @@ class MessageRotationTests(unittest.TestCase):
                 (nf,municipality,state,status,expected_delivery)
                 VALUES(?,'Cidade','PR','faturada','2026-11-20')""", (nf,))
 
-    def test_rotation_is_individual_per_contact_and_stage(self):
+    def test_rotation_is_global_per_stage(self):
         with robo.connect() as c:
-            cid = c.execute("""INSERT INTO contacts
-                (municipality,state,server_name,phone,phone_validated,authorized)
-                VALUES('Cidade','PR','Servidor A','5541999999999',1,1)""").lastrowid
-            self.assertEqual(robo.next_template_number(c, cid, "transporte"), 1)
-            self.assertEqual(robo.next_template_number(c, cid, "transporte"), 2)
-            self.assertEqual(robo.next_template_number(c, cid, "transporte"), 3)
-            self.assertEqual(robo.next_template_number(c, cid, "transporte"), 4)
-            self.assertEqual(robo.next_template_number(c, cid, "transporte"), 1)
-            self.assertEqual(robo.next_template_number(c, cid, "entregue"), 1)
+            self.assertEqual(robo.next_template_number(c, "transporte"), 1)
+            self.assertEqual(robo.next_template_number(c, "transporte"), 2)
+            self.assertEqual(robo.next_template_number(c, "transporte"), 3)
+            self.assertEqual(robo.next_template_number(c, "transporte"), 4)
+            self.assertEqual(robo.next_template_number(c, "transporte"), 1)
+            self.assertEqual(robo.next_template_number(c, "entregue"), 1)
+
+    def test_prepare_rotates_models_between_contacts(self):
+        with robo.connect() as c:
+            for idx in range(4):
+                c.execute("""INSERT INTO contacts
+                    (municipality,state,server_name,phone,phone_validated,authorized)
+                    VALUES('Cidade','PR',?,?,1,1)""",
+                    (f"Servidor {idx}", f"55419999999{idx:02d}"))
+            c.execute("""INSERT INTO invoices
+                (nf,municipality,state,status,expected_delivery)
+                VALUES('NF-ROT','Cidade','PR','faturada','2026-11-20')""")
+        self.assertEqual(robo.prepare(), 4)
+        with robo.connect() as c:
+            models = [r["template_number"] for r in c.execute(
+                "SELECT template_number FROM queue ORDER BY id"
+            )]
+        self.assertEqual(models, [1, 2, 3, 4])
 
     def test_prepare_does_not_duplicate_existing_queue(self):
         with robo.connect() as c:
@@ -51,7 +65,7 @@ class MessageRotationTests(unittest.TestCase):
                 (nf,municipality,state,status,expected_delivery)
                 VALUES('NF-1','Cidade','PR','faturada','2026-11-20')""")
         self.assertEqual(robo.prepare(), 1)
-        self.assertEqual(robo.prepare(), 0)
+        self.assertEqual(robo.prepare(), 1)
         with robo.connect() as c:
             self.assertEqual(c.execute("SELECT COUNT(*) FROM queue").fetchone()[0], 1)
 
